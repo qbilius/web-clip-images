@@ -299,6 +299,22 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
     this.debounceTimers = new Map();
 
     this.registerEvent(
+      this.app.vault.on('create', (file) => {
+        if (!file.path.endsWith('.md')) return;
+        if (!this.isWatched(file.path)) return;
+    
+        if (this.debounceTimers.has(file.path)) {
+          clearTimeout(this.debounceTimers.get(file.path));
+        }
+        const timer = setTimeout(() => {
+          this.debounceTimers.delete(file.path);
+          this.downloadImagesInFile(file);
+        }, this.settings.delayMs);
+        this.debounceTimers.set(file.path, timer);
+      })
+    );
+
+    this.registerEvent(
       this.app.vault.on('modify', (file) => {
         if (!file.path.endsWith('.md')) return;
         if (!this.isWatched(file.path)) return;

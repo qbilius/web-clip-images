@@ -241,15 +241,16 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
     try {
       const leaf = this.app.workspace.getLeaf();
       await leaf.openFile(file);
-      // Brief settle so the editor has fully rendered the file content
-      await new Promise(resolve => setTimeout(resolve, 300));
       this.app.commands.executeCommandById('editor:download-attachments');
 
       // Poll for the confirmation dialog and click the primary button
       for (let i = 0; i < 20; i++) {
         await new Promise(resolve => setTimeout(resolve, 100));
         const btn = document.querySelector('.modal-button-container .mod-cta');
-        if (btn) { btn.click(); break; }
+        if (btn) {
+          btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+          break;
+        }
       }
     } finally {
       this.processingFiles.delete(file.path);

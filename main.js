@@ -1,150 +1,33 @@
 const { Plugin, PluginSettingTab, Setting, Notice, normalizePath, requestUrl } = require('obsidian');
 
-// ─── 国际化 ────────────────────────────────────────────────────────────────
-
-const TRANSLATIONS = {
-  en: {
-    settingTitle:               'Auto Download Images After Clipping',
-    pluginDescription:          'Automatically download remote images to local vault after web clipping.',
-
-    // Language
-    langSettingName:            'Language',
-    langSettingDesc:            'Interface language. "Auto" follows Obsidian\'s language setting.',
-    langAuto:                   'Auto',
-    langEn:                     'English',
-    langZh:                     '简体中文',
-
-    // Watch folders
-    folderSettingName:          'Watch folders',
-    folderSettingDesc:          'Automatically download images when a .md file in these folders is written. One path per line, relative to vault root. e.g. Clippings or ReadItLater/Articles',
-    folderPlaceholder:          'Clippings\nReadItLater/Articles',
-
-    // Delay
-    delaySettingName:           'Debounce delay (ms)',
-    delaySettingDesc:           'Processing starts this long after the last file modification. Increase if images are missed because the clipper is still writing.',
-
-    // Attachment path mode
-    pathModeSettingName:        'Image save location',
-    pathModeSettingDesc:        'Where to save downloaded images.',
-    pathModeObsidian:           'Follow Obsidian settings',
-    pathModeCustom:             'Custom subfolder under the same directory as the note',
-    pathModeSameName:           'Subfolder with the same name as the note (under the same directory)',
-    customFolderSettingName:    'Subfolder name',
-    customFolderSettingDesc:    'Folder name relative to the note\'s directory. Default: attachments',
-    customFolderPlaceholder:    'attachments',
-
-    // Link format
-    linkFormatSettingName:      'Image link format',
-    linkFormatSettingDesc:      'Format used when inserting downloaded images into notes.',
-    linkFormatWikilink:         'Wikilink  ![[...]]',
-    linkFormatMarkdown:         'Markdown  ![alt](...)',
-
-    // Notices
-    noticeSuccess:              (count, name) => `✅ Downloaded ${count} image(s) — ${name}`,
-    noticePartial:              (ok, fail, name) => `⚠️ ${name}: ${ok} succeeded, ${fail} failed (original links kept)`,
-    noticeWriteError:           (name) => `[AutoDL] Failed to write back to ${name}, check console`,
-
-    // Console
-    consoleFailedUrls:          'The following images failed to download (original links kept):',
-    consoleReadError:           'Failed to read file:',
-    consoleWriteBackError:      'Failed to write back md file:',
-    console4xx:                 (status, url) => `[AutoDL] HTTP ${status}, giving up: ${url}`,
-    consoleRetry:               (attempt, delay, url, msg) =>
-                                  `[AutoDL] Attempt ${attempt} failed, retrying in ${delay}ms: ${url}\nReason: ${msg}`,
-    consoleGiveUp:              (attempt, url, msg) =>
-                                  `[AutoDL] Attempt ${attempt} failed, giving up: ${url}\nReason: ${msg}`,
-    consoleKeepOriginal:        (url) => `[AutoDL] Download failed, keeping original link: ${url}`,
-    consoleWriteFailed:         (path, err) => `[AutoDL] Write failed ${path}: ${err}`,
-    consoleSkipNonImage:        (type, url) => `[AutoDL] Non-image response (${type || 'unknown'}), skipping: ${url}`,
-    consoleSkipTooSmall:        (bytes, url) => `[AutoDL] File too small (${bytes}B), likely a tracking pixel, skipping: ${url}`,
-    consoleLoaded:              (folders) => `Auto Download Images After Clipping: started, watching → ${folders}`,
-  },
-
-  zh: {
-    settingTitle:               '剪藏后自动下载图片',
-    pluginDescription:          '网页剪藏后，自动将文中的远程图片下载到本地 vault。',
-
-    langSettingName:            '语言',
-    langSettingDesc:            '界面语言。选择「自动」时跟随 Obsidian 的语言设置。',
-    langAuto:                   '自动',
-    langEn:                     'English',
-    langZh:                     '简体中文',
-
-    folderSettingName:          '监听文件夹',
-    folderSettingDesc:          '在这些文件夹内的 .md 文件写入完成后，自动下载文中图片。每行一个路径（相对于 vault 根目录），例如：Clippings 或 ReadItLater/Articles',
-    folderPlaceholder:          'Clippings\nReadItLater/Articles',
-
-    delaySettingName:           '防抖延迟（毫秒）',
-    delaySettingDesc:           '文件最后一次修改后等待此时长再开始处理。如果图片经常漏下，说明剪藏器写入较慢，可适当调大。',
-
-    pathModeSettingName:        '图片保存位置',
-    pathModeSettingDesc:        '下载的图片保存到哪里。',
-    pathModeObsidian:           '跟随 Obsidian 设置',
-    pathModeCustom:             '笔记所在目录下的指定子文件夹',
-    pathModeSameName:           '笔记所在目录下与笔记同名的子文件夹',
-    customFolderSettingName:    '子文件夹名称',
-    customFolderSettingDesc:    '相对于笔记所在目录的子文件夹名称，默认为 attachments',
-    customFolderPlaceholder:    'attachments',
-
-    linkFormatSettingName:      '图片引用格式',
-    linkFormatSettingDesc:      '下载的图片插入笔记时使用的链接格式。',
-    linkFormatWikilink:         'Wiki 链接  ![[...]]',
-    linkFormatMarkdown:         'Markdown  ![alt](...)',
-
-    noticeSuccess:              (count, name) => `✅ 图片下载完成：${count} 张（${name}）`,
-    noticePartial:              (ok, fail, name) => `⚠️ ${name}：${ok} 张成功，${fail} 张失败（已保留原始链接）`,
-    noticeWriteError:           (name) => `[AutoDL] 写回 ${name} 失败，请查看控制台日志`,
-
-    consoleFailedUrls:          '以下图片下载失败，已保留原始链接：',
-    consoleReadError:           '读取文件失败:',
-    consoleWriteBackError:      '写回 md 文件失败:',
-    console4xx:                 (status, url) => `[AutoDL] ${status} 错误，放弃重试: ${url}`,
-    consoleRetry:               (attempt, delay, url, msg) =>
-                                  `[AutoDL] 第 ${attempt} 次尝试失败，${delay}ms 后重试: ${url}\n原因: ${msg}`,
-    consoleGiveUp:              (attempt, url, msg) =>
-                                  `[AutoDL] 第 ${attempt} 次尝试失败，放弃: ${url}\n原因: ${msg}`,
-    consoleKeepOriginal:        (url) => `[AutoDL] 下载失败，保留原始链接: ${url}`,
-    consoleWriteFailed:         (path, err) => `[AutoDL] 写入文件失败 ${path}: ${err}`,
-    consoleSkipNonImage:        (type, url) => `[AutoDL] 非图片响应（${type || '未知类型'}），跳过: ${url}`,
-    consoleSkipTooSmall:        (bytes, url) => `[AutoDL] 文件过小（${bytes}B），疑似追踪像素，跳过: ${url}`,
-    consoleLoaded:              (folders) => `剪藏后自动下载图片：已启动，监听文件夹 → ${folders}`,
-  },
-};
-
-function detectObsidianLang() {
-  const lang = window.localStorage.getItem('language') || '';
-  return lang === 'zh' ? 'zh' : 'en';
-}
-
-// ─── 默认设置 ──────────────────────────────────────────────────────────────
+// ─── Default settings ──────────────────────────────────────────────────────
 
 const DEFAULT_SETTINGS = {
   watchFolders:           'Clippings',
   delayMs:                2000,
-  language:               'auto',       // 'auto' | 'en' | 'zh'
   attachmentPathMode:     'obsidian',   // 'obsidian' | 'custom' | 'samename'
   customAttachmentFolder: 'attachments',
   linkFormat:             'wikilink',   // 'wikilink' | 'markdown'
 };
 
-// ─── 正则 ──────────────────────────────────────────────────────────────────
+// ─── Regexes ───────────────────────────────────────────────────────────────
 
-// Markdown 图片：![alt](https://...) 及带 title 变体 ![alt](https://... "title")
+// Markdown images: ![alt](https://...) and variants with title
 const MD_IMAGE_REGEX = /!\[([^\]]*)\]\((https?:\/\/[^\s)"']+)(?:\s+(?:"[^"]*"|'[^']*'))?\)/g;
 
-// HTML img 标签：<img src="https://..."> 或 <img src='https://...'>（属性顺序不限）
+// HTML img tags: <img src="https://..."> or <img src='https://...'>
 const HTML_IMG_REGEX = /<img\s[^>]*\bsrc=(?:"(https?:\/\/[^"]+)"|'(https?:\/\/[^']+)')[^>]*>/gi;
 
-// 最小文件大小：小于此值视为追踪像素，直接跳过（1 KB）
+// Minimum file size: below this treat as tracking pixel and skip (1 KB)
 const MIN_IMAGE_BYTES = 1024;
 
-// 下载失败后的重试间隔毫秒数 | Retry interval in milliseconds for failed downloads
+// Retry interval in milliseconds for failed downloads
 const RETRY_DELAY_MS = 1500;
 
-// 同时下载图片的最大并发数 | Maximum number of concurrent image downloads
+// Maximum number of concurrent image downloads
 const DOWNLOAD_CONCURRENCY = 3;
 
-// MIME 类型到文件扩展名的映射表 | Map from MIME type to file extension
+// Map from MIME type to file extension
 const MIME_EXT_MAP = {
   'image/jpeg':    '.jpg',
   'image/png':     '.png',
@@ -155,7 +38,7 @@ const MIME_EXT_MAP = {
   'image/bmp':     '.bmp',
 };
 
-// ─── 设置页 ────────────────────────────────────────────────────────────────
+// ─── Settings tab ──────────────────────────────────────────────────────────
 
 class AutoDownloadSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
@@ -163,42 +46,18 @@ class AutoDownloadSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
-  get t() {
-    const { language } = this.plugin.settings;
-    const lang = language === 'auto' ? detectObsidianLang() : language;
-    return TRANSLATIONS[lang] ?? TRANSLATIONS.en;
-  }
-
   display() {
     const { containerEl } = this;
-    const t = this.t;
     containerEl.empty();
-    containerEl.createEl('h2', { text: t.settingTitle });
+    containerEl.createEl('h2', { text: 'Auto Download Images After Clipping' });
 
-    // ── 语言 ──────────────────────────────────────────────────────────────
+    // Watch folders
     new Setting(containerEl)
-      .setName(t.langSettingName)
-      .setDesc(t.langSettingDesc)
-      .addDropdown(drop => {
-        drop
-          .addOption('auto', t.langAuto)
-          .addOption('en',   t.langEn)
-          .addOption('zh',   t.langZh)
-          .setValue(this.plugin.settings.language)
-          .onChange(async (value) => {
-            this.plugin.settings.language = value;
-            await this.plugin.saveSettings();
-            this.display();
-          });
-      });
-
-    // ── 监听文件夹 ────────────────────────────────────────────────────────
-    new Setting(containerEl)
-      .setName(t.folderSettingName)
-      .setDesc(t.folderSettingDesc)
+      .setName('Watch folders')
+      .setDesc('Automatically download images when a .md file in these folders is written. One path per line, relative to vault root. e.g. Clippings or ReadItLater/Articles')
       .addTextArea(text => {
         text
-          .setPlaceholder(t.folderPlaceholder)
+          .setPlaceholder('Clippings\nReadItLater/Articles')
           .setValue(this.plugin.settings.watchFolders)
           .onChange(async (value) => {
             this.plugin.settings.watchFolders = value;
@@ -209,10 +68,10 @@ class AutoDownloadSettingTab extends PluginSettingTab {
         text.inputEl.style.fontFamily = 'monospace';
       });
 
-    // ── 触发延迟 ──────────────────────────────────────────────────────────
+    // Debounce delay
     new Setting(containerEl)
-      .setName(t.delaySettingName)
-      .setDesc(t.delaySettingDesc)
+      .setName('Debounce delay (ms)')
+      .setDesc('Processing starts this long after the last file modification. Increase if images are missed because the clipper is still writing.')
       .addText(text => {
         text
           .setPlaceholder('2000')
@@ -228,15 +87,15 @@ class AutoDownloadSettingTab extends PluginSettingTab {
         text.inputEl.style.width = '80px';
       });
 
-    // ── 图片保存位置 ──────────────────────────────────────────────────────
+    // Image save location
     new Setting(containerEl)
-      .setName(t.pathModeSettingName)
-      .setDesc(t.pathModeSettingDesc)
+      .setName('Image save location')
+      .setDesc('Where to save downloaded images.')
       .addDropdown(drop => {
         drop
-          .addOption('obsidian', t.pathModeObsidian)
-          .addOption('custom',   t.pathModeCustom)
-          .addOption('samename', t.pathModeSameName)
+          .addOption('obsidian', 'Follow Obsidian settings')
+          .addOption('custom',   'Custom subfolder under the same directory as the note')
+          .addOption('samename', 'Subfolder with the same name as the note (under the same directory)')
           .setValue(this.plugin.settings.attachmentPathMode)
           .onChange(async (value) => {
             this.plugin.settings.attachmentPathMode = value;
@@ -245,14 +104,14 @@ class AutoDownloadSettingTab extends PluginSettingTab {
           });
       });
 
-    // ── 子文件夹名称（仅 custom 模式显示）────────────────────────────────
+    // Custom subfolder name (only shown in 'custom' mode)
     if (this.plugin.settings.attachmentPathMode === 'custom') {
       new Setting(containerEl)
-        .setName(t.customFolderSettingName)
-        .setDesc(t.customFolderSettingDesc)
+        .setName('Subfolder name')
+        .setDesc('Folder name relative to the note\'s directory. Default: attachments')
         .addText(text => {
           text
-            .setPlaceholder(t.customFolderPlaceholder)
+            .setPlaceholder('attachments')
             .setValue(this.plugin.settings.customAttachmentFolder)
             .onChange(async (value) => {
               this.plugin.settings.customAttachmentFolder = value.trim() || 'attachments';
@@ -262,14 +121,14 @@ class AutoDownloadSettingTab extends PluginSettingTab {
         });
     }
 
-    // ── 图片引用格式 ──────────────────────────────────────────────────────
+    // Image link format
     new Setting(containerEl)
-      .setName(t.linkFormatSettingName)
-      .setDesc(t.linkFormatSettingDesc)
+      .setName('Image link format')
+      .setDesc('Format used when inserting downloaded images into notes.')
       .addDropdown(drop => {
         drop
-          .addOption('wikilink', t.linkFormatWikilink)
-          .addOption('markdown', t.linkFormatMarkdown)
+          .addOption('wikilink', 'Wikilink  ![[...]]')
+          .addOption('markdown', 'Markdown  ![alt](...)')
           .setValue(this.plugin.settings.linkFormat)
           .onChange(async (value) => {
             this.plugin.settings.linkFormat = value;
@@ -279,30 +138,26 @@ class AutoDownloadSettingTab extends PluginSettingTab {
   }
 }
 
-// ─── 主插件 ────────────────────────────────────────────────────────────────
+// ─── Main plugin ───────────────────────────────────────────────────────────
 
 class AutoDownloadAttachmentsPlugin extends Plugin {
-
-  get t() {
-    return TRANSLATIONS[this._resolvedLang] ?? TRANSLATIONS.en;
-  }
 
   async onload() {
     await this.loadSettings();
     this.addSettingTab(new AutoDownloadSettingTab(this.app, this));
 
-    // 正在处理的文件路径锁，防止同一文件被并发处理
+    // Lock set to prevent concurrent processing of the same file
     this.processingFiles = new Set();
-    // 本次会话内下载失败/跳过的 URL 黑名单，避免反复重试
+    // Session-scoped blacklist of failed/skipped URLs to avoid repeated retries
     this.failedUrls = new Set();
-    // 每个文件的防抖计时器
+    // Per-file debounce timers
     this.debounceTimers = new Map();
 
     this.registerEvent(
       this.app.vault.on('create', (file) => {
         if (!file.path.endsWith('.md')) return;
         if (!this.isWatched(file.path)) return;
-    
+
         if (this.debounceTimers.has(file.path)) {
           clearTimeout(this.debounceTimers.get(file.path));
         }
@@ -319,7 +174,7 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
         if (!file.path.endsWith('.md')) return;
         if (!this.isWatched(file.path)) return;
 
-        // 防抖：每次修改都重置计时器，静止 delayMs 后才真正触发
+        // Debounce: reset timer on each modification, fire only after delayMs of silence
         if (this.debounceTimers.has(file.path)) {
           clearTimeout(this.debounceTimers.get(file.path));
         }
@@ -332,7 +187,7 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
     );
 
     const folders = this._watchedFolders.join(', ');
-    console.log(this.t.consoleLoaded(folders));
+    console.log(`Auto Download Images After Clipping: started, watching → ${folders}`);
   }
 
   onunload() {
@@ -377,14 +232,18 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
     const leaf = this.app.workspace.getLeaf();
     await leaf.openFile(file);
     this.app.commands.executeCommandById('editor:download-attachments');
+    setTimeout(() => {
+      const btn = document.querySelector('.modal-button-container .mod-cta');
+      if (btn) btn.click();
+    }, 200);
   }
-  
-  // 根据 Content-Type 响应头推断扩展名 | Infer file extension from Content-Type header
+
+  // Infer file extension from Content-Type header
   extFromContentType(contentType) {
     return MIME_EXT_MAP[contentType.split(';')[0].trim()] ?? null;
   }
 
-  // 解析目标路径，若同名文件已存在则追加 (2)、(3)… 后缀
+  // Resolve destination path, appending (2), (3)… if the filename already exists
   async resolveDestPath(folder, baseName) {
     let candidate = normalizePath(`${folder}/${baseName}`);
     if (!await this.app.vault.adapter.exists(candidate)) return candidate;
@@ -395,15 +254,14 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
       candidate = normalizePath(`${folder}/${stem}(${counter})${ext}`);
       if (!await this.app.vault.adapter.exists(candidate)) return candidate;
     }
-    // 超出上限时用时间戳兜底
+    // Fall back to timestamp suffix when counter exceeds limit
     return normalizePath(`${folder}/${stem}(${Date.now()})${ext}`);
   }
 
-  // 确保目录存在：先整体检查，再逐级创建，容忍并发竞态
   // Ensure folder exists: quick full-path check first, then create segment by segment, tolerating race conditions
   async ensureFolder(folderPath) {
     if (!folderPath || folderPath === '/') return;
-    // 绝大多数情况下文件夹已存在，一次检查即可返回 | Fast path: folder already exists in the common case
+    // Fast path: folder already exists in the common case
     if (await this.app.vault.adapter.exists(folderPath)) return;
 
     const parts = folderPath.split('/').filter(p => p);
@@ -414,7 +272,6 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
         try {
           await this.app.vault.createFolder(current);
         } catch (err) {
-          // 若并发任务已先创建，exists 此时应为 true，否则真正报错
           // If a concurrent task already created it, exists should now be true; otherwise re-throw
           if (!await this.app.vault.adapter.exists(current)) throw err;
         }
@@ -422,7 +279,7 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
     }
   }
 
-  // 从 URL 推断扩展名（作为 Content-Type 的回退）
+  // Infer file extension from URL (fallback when Content-Type is unavailable)
   extractExt(url) {
     const clean = url.split('?')[0].split('#')[0];
     const m = clean.match(/\.(jpg|jpeg|png|gif|webp|svg|avif|bmp)$/i);
@@ -431,22 +288,19 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
 
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-    // 缓存解析结果，避免每次事件都重新计算 | Cache derived values to avoid recomputation on every event
-    this._resolvedLang    = this.settings.language === 'auto' ? detectObsidianLang() : this.settings.language;
-    this._watchedFolders  = parseFolders(this.settings.watchFolders);
+    // Cache derived value to avoid recomputation on every event
+    this._watchedFolders = parseFolders(this.settings.watchFolders);
   }
 
   async saveSettings() {
     await this.saveData(this.settings);
-    // 设置变更后同步刷新缓存 | Refresh caches after settings change
-    this._resolvedLang    = this.settings.language === 'auto' ? detectObsidianLang() : this.settings.language;
-    this._watchedFolders  = parseFolders(this.settings.watchFolders);
+    // Refresh cache after settings change
+    this._watchedFolders = parseFolders(this.settings.watchFolders);
   }
 }
 
-// ─── 工具函数 ──────────────────────────────────────────────────────────────
+// ─── Utilities ─────────────────────────────────────────────────────────────
 
-// 根据 linkFormat 生成最终的图片引用字符串
 function formatImageLink(destPath, alt, linkFormat) {
   return linkFormat === 'wikilink'
     ? `![[${destPath}]]`

@@ -152,12 +152,16 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
     this.failedUrls = new Set();
     // Per-file debounce timers
     this.debounceTimers = new Map();
+    // Timestamp of the last completed download per file path, used to suppress
+    // re-triggers from Obsidian writing the file back after downloading images
+    this.lastDownloadTime = new Map();
 
     this.registerEvent(
       this.app.vault.on('create', (file) => {
         if (!file.path.endsWith('.md')) return;
         if (!this.isWatched(file.path)) return;
         if (this.processingFiles.has(file.path)) return;
+        if (this.isRecentlyDownloaded(file.path)) return;
 
         if (this.debounceTimers.has(file.path)) {
           clearTimeout(this.debounceTimers.get(file.path));
@@ -175,6 +179,7 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
         if (!file.path.endsWith('.md')) return;
         if (!this.isWatched(file.path)) return;
         if (this.processingFiles.has(file.path)) return;
+        if (this.isRecentlyDownloaded(file.path)) return;
 
         // Debounce: reset timer on each modification, fire only after delayMs of silence
         if (this.debounceTimers.has(file.path)) {
@@ -236,25 +241,28 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
     try {
       const leaf = this.app.workspace.getLeaf();
       await leaf.openFile(file);
+      // Brief settle so the editor has fully rendered the file content
+      await new Promise(resolve => setTimeout(resolve, 300));
       this.app.commands.executeCommandById('editor:download-attachments');
 
       // Poll for the confirmation dialog and click the primary button
-      let clicked = false;
       for (let i = 0; i < 20; i++) {
         await new Promise(resolve => setTimeout(resolve, 100));
         const btn = document.querySelector('.modal-button-container .mod-cta');
-        if (btn) { btn.click(); clicked = true; break; }
-      }
-
-      // If download was triggered, hold the lock until after Obsidian writes the
-      // file back (replacing remote URLs with local paths), so the resulting
-      // modify events don't start a new download cycle.
-      if (clicked) {
-        await new Promise(resolve => setTimeout(resolve, this.settings.delayMs + 2000));
+        if (btn) { btn.click(); break; }
       }
     } finally {
       this.processingFiles.delete(file.path);
+      // Record the time so that write-back modify events are ignored
+      this.lastDownloadTime.set(file.path, Date.now());
     }
+  }
+
+  // Returns true if this file was downloaded within the last 30 seconds,
+  // suppressing re-triggers from Obsidian's post-download file write-back.
+  isRecentlyDownloaded(filePath) {
+    const t = this.lastDownloadTime.get(filePath);
+    return t !== undefined && (Date.now() - t) < 30_000;
   }
 
   // Infer file extension from Content-Type header

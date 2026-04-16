@@ -157,6 +157,7 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
       this.app.vault.on('create', (file) => {
         if (!file.path.endsWith('.md')) return;
         if (!this.isWatched(file.path)) return;
+        if (this.processingFiles.has(file.path)) return;
 
         if (this.debounceTimers.has(file.path)) {
           clearTimeout(this.debounceTimers.get(file.path));
@@ -173,6 +174,7 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
       this.app.vault.on('modify', (file) => {
         if (!file.path.endsWith('.md')) return;
         if (!this.isWatched(file.path)) return;
+        if (this.processingFiles.has(file.path)) return;
 
         // Debounce: reset timer on each modification, fire only after delayMs of silence
         if (this.debounceTimers.has(file.path)) {
@@ -229,15 +231,20 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
   }
 
   async triggerDownload(file) {
-    const leaf = this.app.workspace.getLeaf();
-    await leaf.openFile(file);
-    this.app.commands.executeCommandById('editor:download-attachments');
+    this.processingFiles.add(file.path);
+    try {
+      const leaf = this.app.workspace.getLeaf();
+      await leaf.openFile(file);
+      this.app.commands.executeCommandById('editor:download-attachments');
 
-    // Poll for the confirmation dialog and click the primary button
-    for (let i = 0; i < 20; i++) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-      const btn = document.querySelector('.modal-button-container .mod-cta');
-      if (btn) { btn.click(); break; }
+      // Poll for the confirmation dialog and click the primary button
+      for (let i = 0; i < 20; i++) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const btn = document.querySelector('.modal-button-container .mod-cta');
+        if (btn) { btn.click(); break; }
+      }
+    } finally {
+      this.processingFiles.delete(file.path);
     }
   }
 

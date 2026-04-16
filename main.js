@@ -231,6 +231,7 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
   }
 
   async triggerDownload(file) {
+    if (this.processingFiles.has(file.path)) return;
     this.processingFiles.add(file.path);
     try {
       const leaf = this.app.workspace.getLeaf();
@@ -238,10 +239,18 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
       this.app.commands.executeCommandById('editor:download-attachments');
 
       // Poll for the confirmation dialog and click the primary button
+      let clicked = false;
       for (let i = 0; i < 20; i++) {
         await new Promise(resolve => setTimeout(resolve, 100));
         const btn = document.querySelector('.modal-button-container .mod-cta');
-        if (btn) { btn.click(); break; }
+        if (btn) { btn.click(); clicked = true; break; }
+      }
+
+      // If download was triggered, hold the lock until after Obsidian writes the
+      // file back (replacing remote URLs with local paths), so the resulting
+      // modify events don't start a new download cycle.
+      if (clicked) {
+        await new Promise(resolve => setTimeout(resolve, this.settings.delayMs + 2000));
       }
     } finally {
       this.processingFiles.delete(file.path);

@@ -308,7 +308,7 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
         }
         const timer = setTimeout(() => {
           this.debounceTimers.delete(file.path);
-          this.downloadImagesInFile(file);
+          this.triggerDownload(file);
         }, this.settings.delayMs);
         this.debounceTimers.set(file.path, timer);
       })
@@ -325,7 +325,7 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
         }
         const timer = setTimeout(() => {
           this.debounceTimers.delete(file.path);
-          this.downloadImagesInFile(file);
+          this.triggerDownload(file);
         }, this.settings.delayMs);
         this.debounceTimers.set(file.path, timer);
       })
@@ -373,194 +373,12 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
     }
   }
 
-  async downloadImagesInFile(file) {
-    // 同一文件同时只允许一个任务运行
-    if (this.processingFiles.has(file.path)) return;
-    this.processingFiles.add(file.path);
-
-    const t = this.t;
-
-    try {
-      // ── 1. 读取文件 ───────────────────────────────────────────────────
-      let content;
-      try {
-        content = await this.app.vault.read(file);
-      } catch (err) {
-        console.error(t.consoleReadError, err);
-        return;
-      }
-
-      // ── 2. 无状态检测：同时扫描 Markdown 图片和 HTML img 标签 ─────────
-      const mdMatches   = [...content.matchAll(MD_IMAGE_REGEX)];
-      const htmlMatches = [...content.matchAll(HTML_IMG_REGEX)];
-      if (mdMatches.length === 0 && htmlMatches.length === 0) return;
-
-      // 收集所有唯一 URL，排除已知失败项
-      const allUrls = [
-        ...mdMatches.map(m => m[2]),
-        ...htmlMatches.map(m => m[1] ?? m[2]),
-      ].filter(Boolean);
-      const uniqueUrls = [...new Set(allUrls)].filter(u => !this.failedUrls.has(u));
-      if (uniqueUrls.length === 0) return;
-
-      // ── 3. 确保附件目录存在 ────────────────────────────────────────────
-      const attachmentFolder = await this.resolveAttachmentFolder(file);
-      await this.ensureFolder(attachmentFolder);
-
-      const titleBase = file.basename
-        .replace(/\s+/g, '-')
-        .replace(/[\\/:*?"<>|]/g, '_');
-
-      // ── 4. 并行下载所有唯一 URL（最多 DOWNLOAD_CONCURRENCY 个同时进行）──
-      const urlToLocal = new Map(); // url → destPath
-      const failedUrls  = [];
-      let savedCount = 1;
-
-      // 并行获取所有图片内容 | Fetch all images in parallel with concurrency limit
-      const downloadResults = await runWithConcurrency(
-        uniqueUrls.map(url => async () => {
-          const result = await this.fetchWithRetry(url, 3);
-          return { url, ...result };
-        }),
-        DOWNLOAD_CONCURRENCY
-      );
-
-      // 顺序保存到磁盘，避免命名冲突 | Save to disk sequentially to avoid naming conflicts
-      for (const { url, buffer, ext } of downloadResults) {
-        if (!buffer) {
-          this.failedUrls.add(url);
-          failedUrls.push(url);
-          console.warn(t.consoleKeepOriginal(url));
-          continue;
-        }
-
-        const rawName = `${titleBase}-${savedCount}${ext}`
-          .replace(/\s+/g, '-')
-          .replace(/[\\:*?"<>|]/g, '_');
-        const destPath = await this.resolveDestPath(attachmentFolder, rawName);
-
-        try {
-          await this.app.vault.adapter.writeBinary(destPath, buffer);
-          urlToLocal.set(url, destPath);
-          savedCount++;
-        } catch (err) {
-          this.failedUrls.add(url);
-          failedUrls.push(url);
-          console.error(t.consoleWriteFailed(destPath, err));
-        }
-      }
-
-      // ── 5. 原子写回：用 vault.process 替换所有成功下载的链接 ──────────
-      if (urlToLocal.size > 0) {
-        const { linkFormat } = this.settings;
-        try {
-          await this.app.vault.process(file, (currentContent) => {
-            let updated = currentContent;
-            for (const [url, destPath] of urlToLocal) {
-              const urlEscaped = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-              // 替换 Markdown 格式图片链接（含可选 title）
-              const mdRe = new RegExp(
-                `!\\[([^\\]]*)\\]\\(${urlEscaped}(?:\\s+(?:"[^"]*"|'[^']*'))?\\)`,
-                'g'
-              );
-              updated = updated.replace(mdRe, (_, alt) =>
-                formatImageLink(destPath, alt, linkFormat)
-              );
-
-              // 替换 HTML <img> 标签，从标签属性中提取 alt
-              const htmlRe = new RegExp(
-                `<img\\s[^>]*\\bsrc=(?:"${urlEscaped}"|'${urlEscaped}')[^>]*>`,
-                'gi'
-              );
-              updated = updated.replace(htmlRe, (fullTag) => {
-                const altMatch = fullTag.match(/\balt=(?:"([^"]*)"|'([^']*)')/i);
-                const alt = altMatch ? (altMatch[1] ?? altMatch[2] ?? '') : '';
-                return formatImageLink(destPath, alt, linkFormat);
-              });
-            }
-            return updated;
-          });
-        } catch (err) {
-          console.error(t.consoleWriteBackError, err);
-          new Notice(t.noticeWriteError(file.basename));
-          return;
-        }
-      }
-
-      // ── 6. 通知用户 ───────────────────────────────────────────────────
-      const successCount = urlToLocal.size;
-      if (failedUrls.length === 0 && successCount > 0) {
-        new Notice(t.noticeSuccess(successCount, file.basename));
-      } else if (failedUrls.length > 0) {
-        new Notice(t.noticePartial(successCount, failedUrls.length, file.basename), 8000);
-        console.warn(t.consoleFailedUrls + '\n' + failedUrls.join('\n'));
-      }
-
-    } finally {
-      // 无论成功还是失败都释放锁
-      this.processingFiles.delete(file.path);
-    }
+  async triggerDownload(file) {
+    const leaf = this.app.workspace.getLeaf();
+    await leaf.openFile(file);
+    this.app.commands.executeCommandById('editor:download-attachments');
   }
-
-  async fetchWithRetry(url, maxRetries = 3) {
-    const t = this.t;
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        // 使用 requestUrl（Node.js 层发起，绕过 CORS / 防盗链限制）
-        const resp = await requestUrl({
-          url,
-          headers: {
-            'Referer':    new URL(url).origin,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          },
-          throw: false, // 不自动抛出，手动判断状态码
-        });
-
-        if (resp.status >= 400 && resp.status < 500) {
-          console.warn(t.console4xx(resp.status, url));
-          return { buffer: null, ext: '.jpg' };
-        }
-
-        if (resp.status >= 300) {
-          throw new Error(`HTTP ${resp.status}`);
-        }
-
-        // ── 验证 Content-Type：仅接受图片类型 ─────────────────────────
-        const contentType = resp.headers['content-type'] || '';
-        const isImage  = contentType.startsWith('image/');
-        const isBinary = contentType.includes('application/octet-stream') || contentType === '';
-        if (!isImage && !isBinary) {
-          // 服务器明确返回了非图片类型（如 text/html 错误页），跳过
-          console.warn(t.consoleSkipNonImage(contentType, url));
-          return { buffer: null, ext: '.jpg' };
-        }
-
-        // ── 过滤追踪像素（< 1 KB）─────────────────────────────────────
-        if (resp.arrayBuffer.byteLength < MIN_IMAGE_BYTES) {
-          console.warn(t.consoleSkipTooSmall(resp.arrayBuffer.byteLength, url));
-          return { buffer: null, ext: '.jpg' };
-        }
-
-        // 优先用 Content-Type 推断扩展名，回退到 URL 推断
-        const ext = this.extFromContentType(contentType) || this.extractExt(url);
-        return { buffer: resp.arrayBuffer, ext };
-
-      } catch (err) {
-        const isLastAttempt = attempt === maxRetries;
-        if (isLastAttempt) {
-          console.warn(t.consoleGiveUp(attempt, url, err.message));
-          return { buffer: null, ext: '.jpg' };
-        }
-        console.warn(t.consoleRetry(attempt, RETRY_DELAY_MS, url, err.message));
-        await sleep(RETRY_DELAY_MS);
-      }
-    }
-
-    return { buffer: null, ext: '.jpg' };
-  }
-
+  
   // 根据 Content-Type 响应头推断扩展名 | Infer file extension from Content-Type header
   extFromContentType(contentType) {
     return MIME_EXT_MAP[contentType.split(';')[0].trim()] ?? null;
@@ -635,10 +453,6 @@ function formatImageLink(destPath, alt, linkFormat) {
     : `![${alt}](<${destPath}>)`;
 }
 
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
-}
-
 function parseFolders(raw) {
   return raw
     .split('\n')
@@ -653,25 +467,6 @@ function sanitizeFolderName(name) {
     .replace(/\s+/g, '-')
     .replace(/^[.\s]+|[.\s]+$/g, '')
     || 'attachments';
-}
-
-/**
- * 以有限并发度运行异步任务列表，返回与入参顺序一致的结果数组
- * Run async tasks with a concurrency limit; returns results in the same order as input
- */
-async function runWithConcurrency(tasks, limit) {
-  const results = new Array(tasks.length);
-  let nextIndex = 0;
-  async function worker() {
-    while (nextIndex < tasks.length) {
-      const i = nextIndex++;
-      results[i] = await tasks[i]();
-    }
-  }
-  await Promise.all(
-    Array.from({ length: Math.min(limit, tasks.length) }, worker)
-  );
-  return results;
 }
 
 module.exports = AutoDownloadAttachmentsPlugin;

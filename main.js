@@ -243,13 +243,16 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
       await leaf.openFile(file);
       this.app.commands.executeCommandById('editor:download-attachments');
 
-      // Poll for the confirmation dialog and confirm it
+      // Poll for the confirmation dialog, confirm it, then close the modal
       for (let i = 0; i < 20; i++) {
         await new Promise(resolve => setTimeout(resolve, 100));
         const btn = document.querySelector('.modal-button-container .mod-cta');
         if (btn) {
           btn.focus();
           btn.click();
+          // Obsidian keeps the modal open after confirming — close it
+          await new Promise(resolve => setTimeout(resolve, 100));
+          document.querySelector('.modal-close-button')?.click();
           break;
         }
       }

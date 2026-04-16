@@ -243,12 +243,13 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
       await leaf.openFile(file);
       this.app.commands.executeCommandById('editor:download-attachments');
 
-      // Poll for the confirmation dialog and click the primary button
+      // Poll for the confirmation dialog and confirm it
       for (let i = 0; i < 20; i++) {
         await new Promise(resolve => setTimeout(resolve, 100));
         const btn = document.querySelector('.modal-button-container .mod-cta');
         if (btn) {
-          btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+          btn.focus();
+          btn.click();
           break;
         }
       }

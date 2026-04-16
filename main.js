@@ -232,10 +232,13 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
     const leaf = this.app.workspace.getLeaf();
     await leaf.openFile(file);
     this.app.commands.executeCommandById('editor:download-attachments');
-    setTimeout(() => {
+
+    // Poll for the confirmation dialog and click the primary button
+    for (let i = 0; i < 20; i++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
       const btn = document.querySelector('.modal-button-container .mod-cta');
-      if (btn) btn.click();
-    }, 200);
+      if (btn) { btn.click(); break; }
+    }
   }
 
   // Infer file extension from Content-Type header

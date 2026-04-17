@@ -168,7 +168,7 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
         }
         const timer = setTimeout(() => {
           this.debounceTimers.delete(file.path);
-          this.triggerDownload(file);
+          if (!this.isRecentlyDownloaded(file.path)) this.triggerDownload(file);
         }, this.settings.delayMs);
         this.debounceTimers.set(file.path, timer);
       })
@@ -187,7 +187,7 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
         }
         const timer = setTimeout(() => {
           this.debounceTimers.delete(file.path);
-          this.triggerDownload(file);
+          if (!this.isRecentlyDownloaded(file.path)) this.triggerDownload(file);
         }, this.settings.delayMs);
         this.debounceTimers.set(file.path, timer);
       })
@@ -237,6 +237,7 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
 
   async triggerDownload(file) {
     if (this.processingFiles.has(file.path)) return;
+    if (this.isRecentlyDownloaded(file.path)) return;
     this.processingFiles.add(file.path);
     try {
       const leaf = this.app.workspace.getLeaf();

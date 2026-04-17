@@ -239,6 +239,20 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
     if (this.processingFiles.has(file.path)) return;
     if (this.isRecentlyDownloaded(file.path)) return;
     this.processingFiles.add(file.path);
+
+    // Suppress Obsidian's spurious post-download "no attachments" notice.
+    // The command re-scans after downloading and emits this when nothing remains.
+    const SUPPRESS = 'There are no external attachments in this note.';
+    const observer = new MutationObserver(mutations => {
+      for (const { addedNodes } of mutations)
+        for (const node of addedNodes)
+          if (node instanceof HTMLElement && node.textContent.includes(SUPPRESS))
+            node.remove();
+    });
+    observer.observe(document.body, { childList: true });
+    // Disconnect after 30 s — long enough to cover slow downloads
+    const observerTimer = setTimeout(() => observer.disconnect(), 30_000);
+
     try {
       const content = await this.app.vault.read(file);
       MD_IMAGE_REGEX.lastIndex = 0;
@@ -267,8 +281,11 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
       }
     } finally {
       this.processingFiles.delete(file.path);
-      // Record the time so that write-back modify events are ignored
       this.lastDownloadTime.set(file.path, Date.now());
+      clearTimeout(observerTimer);
+      // Keep observer alive briefly to catch any late-arriving notice,
+      // then disconnect so it doesn't interfere with unrelated commands
+      setTimeout(() => observer.disconnect(), 5_000);
     }
   }
 

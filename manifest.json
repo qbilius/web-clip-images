@@ -1,7 +1,7 @@
 {
   "id": "web-clip-images",
   "name": "Web Clip Images",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "minAppVersion": "1.8.3",
   "description": "Automatically download remote images to local vault after web clipping.",
   "author": "github.com/qbilius",

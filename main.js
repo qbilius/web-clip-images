@@ -240,6 +240,14 @@ class AutoDownloadAttachmentsPlugin extends Plugin {
     if (this.isRecentlyDownloaded(file.path)) return;
     this.processingFiles.add(file.path);
     try {
+      const content = await this.app.vault.read(file);
+      MD_IMAGE_REGEX.lastIndex = 0;
+      HTML_IMG_REGEX.lastIndex = 0;
+      const hasExternal = MD_IMAGE_REGEX.test(content) || HTML_IMG_REGEX.test(content);
+      MD_IMAGE_REGEX.lastIndex = 0;
+      HTML_IMG_REGEX.lastIndex = 0;
+      if (!hasExternal) return;
+
       const leaf = this.app.workspace.getLeaf();
       await leaf.openFile(file);
       this.app.commands.executeCommandById('editor:download-attachments');
